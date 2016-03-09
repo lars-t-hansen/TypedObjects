@@ -27,7 +27,7 @@ const UINT32 = 5;
 const FLOAT32 = 6;
 const FLOAT64 = 7;
 const STRUCT = 8;
-const ANY = 9;		// Not supported - transparent objs only, see later
+const ANY = 9;	                // Not supported - transparent objs only, see later
 const OBJECT = 10;		// Not supported - transparent objs only, see later
 const STRING = 11;		// Not supported - transparent objs only, see later
 
@@ -38,8 +38,8 @@ const _structArrayType = function() {
     throw new Error("struct arrays not supported yet");
 }
 
-// TODO: It's possible "any", "object", and "string" in opaque could
-// be supported as follows.  Every instance of an opaque object
+// TODO: It's possible "any", "object", and "string" in opaque objects
+// could be supported as follows.  Every instance of an opaque object
 // contains a private array that maps integers to object values.  When
 // an object is stored in a TO ref field it is stored in the shadow
 // array and the index is stored in the TO ref field; when it is read
@@ -70,26 +70,12 @@ const _structType = function(fields, options) {
 	offs = (offs + (type.align - 1)) & ~(type.align - 1);
 	switch (type.tag) {
 	case INT8:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case UINT8:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case INT16:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case UINT16:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case INT32:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case UINT32:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case FLOAT32:
-	    prop = _getterSetter(type, offs);
-	    break;
 	case FLOAT64:
 	    prop = _getterSetter(type, offs);
 	    break;
@@ -127,6 +113,8 @@ const _structType = function(fields, options) {
     return constructor;
 }
 
+// Optimization: freeze whatever fields can be frozen.
+
 const _toConstructor = function() {
     return function (v1, v2, v3) {
 	if (v1 === _cookie) {
@@ -149,7 +137,11 @@ const _toConstructor = function() {
 // mapped onto the same memory.
 //
 // Optimization: If only one view type is needed then the object could
-// reference that directly instead of going via the _mem object.
+// reference that directly instead of going via the _mem object, and
+// the object offset could be pre-shifted, and the constant index in
+// the accessor methods could be pre-shifted too.
+//
+// Optimization: freeze whatever fields can be frozen.
 
 const _toView = function(align, constructor) {
     return function (buffer, offset_) {
@@ -181,7 +173,7 @@ const _toViewIllegal = function() {
 // back the strategy up with numbers; obviously we end up with more
 // function bodies this way.
 //
-// Optimization: If the optimizer can support it we could just store
+// Optimization: If the JIT can handle it we could just store
 // the buffer on the TO instance and create a throwaway view here.
 // That's what a native implementation would effectively do.
 
