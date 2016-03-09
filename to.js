@@ -18,18 +18,18 @@
 // See end for the definition of the TypedObject module object.
 // Everything else is internal.
 
-const _TO_INT8 = 0;
-const _TO_UINT8 = 1;
-const _TO_INT16 = 2;
-const _TO_UINT16 = 3;
-const _TO_INT32 = 4;
-const _TO_UINT32 = 5;
-const _TO_FLOAT32 = 6;
-const _TO_FLOAT64 = 7;
-const _TO_STRUCT = 8;
-const _TO_ANY = 9;		// Not supported - transparent objs only, see later
-const _TO_OBJECT = 10;		// Not supported - transparent objs only, see later
-const _TO_STRING = 11;		// Not supported - transparent objs only, see later
+const INT8 = 0;
+const UINT8 = 1;
+const INT16 = 2;
+const UINT16 = 3;
+const INT32 = 4;
+const UINT32 = 5;
+const FLOAT32 = 6;
+const FLOAT64 = 7;
+const STRUCT = 8;
+const ANY = 9;		// Not supported - transparent objs only, see later
+const OBJECT = 10;		// Not supported - transparent objs only, see later
+const STRING = 11;		// Not supported - transparent objs only, see later
 
 const _cookie = {};
 
@@ -38,14 +38,18 @@ const _structArrayType = function() {
     throw new Error("struct arrays not supported yet");
 }
 
-// TODO: It's possible "any", "object", and "string" could be
-// supported using some type of weak map where the value stored in
-// memory is an integer key inside that map (and for "any", also a
-// tag).  But since I'm only planning to support transparent objects,
-// there's no need for these anyway.
+// TODO: It's possible "any", "object", and "string" in opaque could
+// be supported as follows.  Every instance of an opaque object
+// contains a private array that maps integers to object values.  When
+// an object is stored in a TO ref field it is stored in the shadow
+// array and the index is stored in the TO ref field; when it is read
+// from the TO ref field the index is used to look it up in the shadow
+// array.  This is expensive but has no GC issues and the shadow array
+// is only as costly as the number of ref fields.  Normally the shadow
+// array would not be created at all.
 
 const _structType = function(fields, options) {
-    if (!options || typeof options != "object")
+    if (!options || typeof options != "object") // Hm, functions?
 	options = {};
 
     if (options.defaults) {
@@ -65,42 +69,42 @@ const _structType = function(fields, options) {
 	let prop = null;
 	offs = (offs + (type.align - 1)) & ~(type.align - 1);
 	switch (type.tag) {
-	case _TO_INT8:
+	case INT8:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_UINT8:
+	case UINT8:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_INT16:
+	case INT16:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_UINT16:
+	case UINT16:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_INT32:
+	case INT32:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_UINT32:
+	case UINT32:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_FLOAT32:
+	case FLOAT32:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_FLOAT64:
+	case FLOAT64:
 	    prop = _getterSetter(type, offs);
 	    break;
-	case _TO_STRUCT:
+	case STRUCT:
 	    prop = { get: _getterStruct(type, offs), set: _setterStruct(type, offs) };
 	    break;
-	case _TO_ANY:
-	case _TO_OBJECT:
-	case _TO_STRING:
+	case ANY:
+	case OBJECT:
+	case STRING:
 	    throw new Error("Opaque type not supported: " + type.toSource());
 	default:
 	    throw new Error("Unknown field type: " + type.toSource());
 	}
 	Object.defineProperty(proto, name, prop);
-	if (type.tag == _TO_STRUCT)
+	if (type.tag == STRUCT)
 	    align = 8;
 	else
 	    align = Math.max(align, type.size);
@@ -115,7 +119,7 @@ const _structType = function(fields, options) {
 
     // TODO: Hide these properties (also inside _numberType and _invalType)
     constructor.view = options.transparent ? _toView(align, constructor) : _toViewIllegal();
-    constructor.tag = _TO_STRUCT;
+    constructor.tag = STRUCT;
     constructor.typeName = "structure";
     constructor.size = offs;
     constructor.align = align;
@@ -234,17 +238,17 @@ var TypedObject =
 	return _structType(a1, a2);
     },
 
-    int8:    _numberType("int8",    _TO_INT8,    1, (v) => (v<<24)>>24),
-    uint8:   _numberType("uint8",   _TO_UINT8,   1, (v) => (v<<24)>>>24),
-    int16:   _numberType("int16",   _TO_INT16,   2, (v) => (v<<16)>>16),
-    uint16:  _numberType("uint16",  _TO_UINT16,  2, (v) => (v<<16)>>>16),
-    int32:   _numberType("int32",   _TO_INT32,   4, (v) => v|0),
-    uint32:  _numberType("uint32",  _TO_UINT32,  4, (v) => v>>>0),
-    float32: _numberType("float32", _TO_FLOAT32, 4, Math.fround),
-    float64: _numberType("float64", _TO_FLOAT64, 8, (v) => +v),
-    any:     _invalType("any",      _TO_ANY,     4),
-    string:  _invalType("string",   _TO_STRING,  4),
-    object:  _invalType("object",   _TO_OBJECT,  4),
+    int8:    _numberType("int8",    INT8,    1, (v) => (v<<24)>>24),
+    uint8:   _numberType("uint8",   UINT8,   1, (v) => (v<<24)>>>24),
+    int16:   _numberType("int16",   INT16,   2, (v) => (v<<16)>>16),
+    uint16:  _numberType("uint16",  UINT16,  2, (v) => (v<<16)>>>16),
+    int32:   _numberType("int32",   INT32,   4, (v) => v|0),
+    uint32:  _numberType("uint32",  UINT32,  4, (v) => v>>>0),
+    float32: _numberType("float32", FLOAT32, 4, Math.fround),
+    float64: _numberType("float64", FLOAT64, 8, (v) => +v),
+    any:     _invalType("any",      ANY,     4),
+    string:  _invalType("string",   STRING,  4),
+    object:  _invalType("object",   OBJECT,  4),
 
     buffer:  function (to) { return to._mem.int8.buffer; },
     offset:  function (to) { return to._offset + to._mem.int8.byteOffset; },
