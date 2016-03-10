@@ -4,7 +4,8 @@
 //
 //  - Proper range checking on access: All getters and setters should
 //    throw on OOB, I think.  Now, we just read undefined values, as
-//    for TypedArray accesses.
+//    for TypedArray accesses.  The cost of range checking should
+//    be measured, though.
 //
 //  - Hash-consing of objects: When creating two views on a buffer the
 //    resulting objects should be == but here they are not.  We
@@ -33,7 +34,12 @@ const STRING = 11;		// Not supported - transparent objs only, see later
 
 const _cookie = {};
 
-const _structArrayType = function() {
+const _shiftForSize = [0, 0, 1, 0, 2, 0, 0, 0, 3];
+
+const _structArrayType = function(type, numElems, options) {
+    if (options === null || options === undefined)
+	options = {};
+
     // TODO: implement this
     throw new Error("struct arrays not supported yet");
 }
@@ -42,29 +48,36 @@ const _structArrayType = function() {
 // could be supported as follows.  Every instance of an opaque object
 // contains a private array that maps integers to object values.  When
 // an object is stored in a TO ref field it is stored in the shadow
-// array and the index is stored in the TO ref field; when it is read
+// array and the index is stored in the TO ref field (actually the
+// index is constant and can be stored just once); when it is read
 // from the TO ref field the index is used to look it up in the shadow
-// array.  This is expensive but has no GC issues and the shadow array
-// is only as costly as the number of ref fields.  Normally the shadow
-// array would not be created at all.
+// array.  The scheme allows for subobjects too, sharing that array.
+// The scheme is fairly expensive but has no GC issues and the shadow
+// array is only as costly as the number of ref fields.  Normally the
+// shadow array would not be created at all.
+//
+// An additional optimization is that when there are no sub-types
+// containing refs, the refs can be stored by name on the object
+// itself.
 
 const _structType = function(fields, options) {
-    if (!options || typeof options != "object") // Hm, functions?
+    if (options === null || options === undefined)
 	options = {};
 
     if (options.defaults) {
-	// TODO: Also see struct assignment.  Defaults are not needed
-	// for Type.view() or struct assignment, only once we support
-	// non-transparent types.
+	// TODO: Also see _setterStruct.  Defaults are not needed
+	// for Type.view() or struct assignment, only for construction.
 	throw new Error("Defaults not supported yet");
     }
 
     let proto = {};
+    let desc = [];
     let offs = 0;
     let align = 1;
     for ( let name in fields ) {
 	if (!fields.hasOwnProperty(name))
 	    continue;
+	// TODO: throw, if this is the name of an indexed property
 	let type = fields[name];
 	let prop = null;
 	offs = (offs + (type.align - 1)) & ~(type.align - 1);
@@ -89,16 +102,16 @@ const _structType = function(fields, options) {
 	default:
 	    throw new Error("Unknown field type: " + type.toSource());
 	}
+	desc.push({name:name, offset: offs, type: type});
 	Object.defineProperty(proto, name, prop);
-	if (type.tag == STRUCT)
-	    align = 8;
-	else
-	    align = Math.max(align, type.size);
+	align = Math.max(align, type.align);
 	offs += type.size;
     }
 
+    // Rounding the size to the alignment makes arrays of objects simple
     offs = (offs + (align - 1)) & ~(align - 1);
 
+    // TODO: hide _length on the prototype
     let constructor = _toConstructor();
     proto._length = offs;
     constructor.prototype = proto;
@@ -109,6 +122,7 @@ const _structType = function(fields, options) {
     constructor.typeName = "structure";
     constructor.size = offs;
     constructor.align = align;
+    constructor.desc = desc;
 
     return constructor;
 }
@@ -117,12 +131,16 @@ const _structType = function(fields, options) {
 
 const _toConstructor = function() {
     return function (v1, v2, v3) {
+	// TODO: Hide _mem and _offset behind symbols
+	// TODO: Object should be frozen at construction (no expandos on TypedObjects)
 	if (v1 === _cookie) {
 	    this._mem = v2;
 	    this._offset = v3;
 	}
 	else {
 	    // TODO: implement this, then expose the buffer.
+	    // See _setterStruct, but with defaults (simple generalization).
+	    // The buffer will be new so no need to clear it.
 	    throw new Error("Only instantiation onto a pre-existing buffer is supported yet");
 	}
     }
@@ -178,27 +196,59 @@ const _toViewIllegal = function() {
 // That's what a native implementation would effectively do.
 
 const _getterSetter = function(type, offs) {
-    let shift = [0, 1, 0, 2, 0, 0, 0, 3][type.size-1];
+    let shift = _shiftForSize[type.size];
     let ta = type.typeName;
     return { get: new Function("", `return this._mem.${ta}[(this._offset + ${offs})>>${shift}]`),
 	     set: new Function("v", `this._mem.${ta}[(this._offset + ${offs})>>${shift}] = v`) };
 }
 
-// Note, fieldOffs and this._offset are both trusted so no alignment
-// check is required.
-//
-// TODO: For type analysis it might be best to construct this function
-// at run-time as well?
+// Optimization: For type analysis it might be best to construct this
+// function at run-time as well?
 
 const _getterStruct = function(type, fieldOffs) {
-    return function () { return new type(_cookie, this._mem, this._offset + fieldOffs) }
+    // fieldOffs and this._offset are trusted, no alignment check required
+    return function () {
+	return new type(_cookie, this._mem, this._offset + fieldOffs);
+    }
 }
 
+// TODO: Does this need to clear un-assigned fields?
+
 const _setterStruct = function(type, fieldOffs) {
-    // TODO: implement this.
-    // For each field in the type that is also in v, copy the value
-    // from v into this object.
-    return function (v) { throw new Error("Unimplemented") }
+    let code = [];
+
+    function traverseStruct(type, src, offs) {
+	for ( let d of type.desc ) {
+	    switch (d.type.tag) {
+	    case INT8:
+	    case UINT8:
+	    case INT16:
+	    case UINT16:
+	    case INT32:
+	    case UINT32:
+	    case FLOAT32:
+	    case FLOAT64: {
+		let typename = d.type.typeName;
+		let shift = _shiftForSize[d.type.size];
+		code.push(`if ('${d.name}' in ${src}) { this._mem.${typename}[(this._offset + ${offs + d.offset}) >> ${shift}] = ${src}.${d.name} }`);
+		break;
+	    }
+	    case STRUCT:
+		traverseStruct(d.type, src + "v", offs + d.offset);
+		break;
+	    case ANY:
+	    case OBJECT:
+	    case STRING:
+		throw new Error("Ref fields not supported yet");
+	    default:
+		throw new Error("Bad field type: " + d.tag);
+	    }
+	}
+    }
+
+    traverseStruct(type, "v", fieldOffs);
+
+    return new Function("v", code.join("\n"));
 }
 
 const _numberType = function(name, tag, size, convert) {
@@ -207,6 +257,7 @@ const _numberType = function(name, tag, size, convert) {
     convert.size = size;
     convert.align = size;
     convert.view = function () { throw new Error("Can't view a primitive type"); } // Why not?
+    convert.desc = null;
     return convert;
 }
 
@@ -219,6 +270,7 @@ const _invalType = function(name, tag, size) {
     convert.size = size;
     convert.align = 1;
     convert.view = function () { throw new Error("Can't view an invalid type"); }
+    convert.desc = null;
     return convert;
 }
 

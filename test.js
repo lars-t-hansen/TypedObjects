@@ -55,3 +55,18 @@ assertEq(T.length(rect.lr), 8);
 
 assertEq(T.int8(-256), 0);
 assertEq(T.int8(-257), -1);
+
+rect.ul.x = 0;
+rect.ul.y = 0;
+
+assertEq(rect.ul.x, 0);
+assertEq(rect.ul.y, 0);
+
+var pt2 = Point.view(ab, 0);
+pt2.x = 0x1337;
+pt2.x = 0xd00d;
+
+rect.ul = pt2;
+
+assertEq(rect.ul.x, pt2.x);
+assertEq(rect.ul.y, pt2.y);
