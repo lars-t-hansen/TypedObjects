@@ -77,7 +77,8 @@ const _structType = function(fields, options) {
     for ( let name in fields ) {
 	if (!fields.hasOwnProperty(name))
 	    continue;
-	// TODO: throw, if this is the name of an indexed property
+	if (name.match(/^\s*(0x)?\d+\s*$/))
+	    throw new Error("Number-like names are not allowed as field names");
 	let type = fields[name];
 	let prop = null;
 	offs = (offs + (type.align - 1)) & ~(type.align - 1);
@@ -213,6 +214,14 @@ const _getterStruct = function(type, fieldOffs) {
 }
 
 // TODO: Does this need to clear un-assigned fields?
+//
+// Optimization(?): The "in" test might be expensive and is really
+// only needed when the property value we read is undefined, so could
+// instead lookup the value and go right ahead with the assignment if
+// the value is not undefined.
+//
+// Optimization: if the input value is the same type as the target
+// type we could just memcpy.
 
 const _setterStruct = function(type, fieldOffs) {
     let code = [];
